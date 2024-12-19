@@ -1,0 +1,136 @@
+include <opencv2/opencv.hpp>
+#include <iostream>
+#include<string>
+using namespace std;
+using namespace cv;
+
+//Swap frequency data, center the low frequency
+void swapFreq(const Mat& F)
+{
+	int cx = F.cols / 2;
+	int cy = F.rows / 2;
+	Mat q0(F, Rect(0, 0, cx, cy)); // Top-Left
+	Mat q1(F, Rect(cx, 0, cx, cy)); // Top-Right
+	Mat q2(F, Rect(0, cy, cx, cy)); // Bottom-Left
+	Mat q3(F, Rect(cx, cy, cx, cy)); // Bottom-Right
+	//swap quadrants
+	Mat tmp;
+	q0.copyTo(tmp);
+	q3.copyTo(q0);
+	tmp.copyTo(q3);
+	q1.copyTo(tmp);
+	q2.copyTo(q1);
+	tmp.copyTo(q2);
+}
+
+// DFT transform
+Mat myDFT(const Mat& f)
+{
+	Mat F; //frequency data
+	Mat padded; //Padded image
+	//Pad image to optimal DFT size with 0s
+	int m = getOptimalDFTSize(f.rows);
+	int n = getOptimalDFTSize(f.cols);
+	copyMakeBorder(f, padded, 0, m - f.rows, 0, n - f.cols,
+		BORDER_CONSTANT, Scalar::all(0));
+	// allocate memory for storing frequency data and doing DFT
+	Mat planes[] = { Mat_<float>(padded),
+	Mat(padded.size(), CV_32F, 0.0f) };
+	merge(planes, 2, F);
+	dft(F, F);
+	swapFreq(F);
+	return F;
+}
+
+//IDFT transform
+Mat myIDFT(const Mat& F)
+{
+	Mat planes[2];
+	swapFreq(F);
+	idft(F, F, DFT_SCALE);
+	split(F, planes);
+	return planes[0].clone();
+}
+//showFreq
+void showFreq(string a, const Mat& f)
+{
+	Mat planes[2], Fmag;
+	split(f, planes);
+	magnitude(planes[0], planes[1], Fmag);
+	//log
+	Fmag += 1;
+	log(Fmag, Fmag);
+	Fmag /= log(2.0);
+	//show result
+	normalize(Fmag, Fmag, 0, 1, NORM_MINMAX);
+	imshow(a, Fmag);
+}
+//show mask
+void showMask(string a, const Mat& f)
+{
+	Mat maskH[2];
+	split(f, maskH);
+	imshow(a, maskH[0]);
+}
+
+Mat Degradation(const Mat& F, float k=1)
+{
+	Mat tmp = F.clone();
+	Mat_<Vec2f> H = Mat(F.rows, F.cols, CV_32FC2);
+	int cx = F.cols / 2;
+	int cy = F.rows / 2;
+	for (int u = 0; u < F.rows; u++) {
+		for (int v = 0; v < F.cols; v++) {
+			int u1 = u - cy;
+			int vi = v - cx;
+			H(u, v)[0] = (float)exp(-k * pow((u * u + v * v), (5 / 6)));
+			H(u, v)[1] = H(u, v)[0];
+		}
+	}
+	tmp = tmp.mul(H);
+	showMask("Recover Mask", H);
+	return tmp;
+}
+
+Mat degradeImagae(const Mat& f, float k)
+{
+	Mat F = myDFT(f);
+
+}
+void Recover(Mat& F, float k)
+{
+	Mat_<Vec2f> H = Mat(F.rows, F.cols, CV_32FC2);
+	//	int cx = F.cols / 2;
+	//	int cy = F.rows / 2;
+	for (int u = 0; u < F.rows; u++) {
+		for (int v = 0; v < F.cols; v++) {
+			H(u, v)[0] = (float)exp(k * pow((u * u + v * v), (5 / 6)));
+			H(u, v)[1] = H(u, v)[0];
+		}
+	}
+	F = F.mul(H);
+	showMask("degradation Mask", H);
+}
+//Applying ideal low pass filter to input image
+int main(void)
+{
+	Mat f = imread("sample.bmp", IMREAD_REDUCED_GRAYSCALE_2);
+	if (!f.empty()) {
+		f.convertTo(f, CV_32F, 1.f / 255);
+		Mat F = myDFT(f);
+		imshow("Source", f);
+		showFreq("f before", F);
+
+		Degradation(F,0.5);
+		Mat G = F.clone();
+		showFreq("F after being degraded", F);
+		imshow("degradation ", myIDFT(F));
+
+		Recover(G, 0.5);
+		showFreq("F after being recovered", G);
+		imshow("Recover", myIDFT(G));
+		
+		
+		waitKey(0);
+	}
+}
